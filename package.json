@@ -1,0 +1,13 @@
+{
+  "name": "study-04",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.0",
+    "express": "^5.2.1",
+    "multer": "^2.2.0"
+  }
+}
