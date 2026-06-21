@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>레시피 추천 — Step 2</title>
+  <script>if (!localStorage.getItem('auth_token')) location.replace('/login.html');</script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -23,7 +24,8 @@
       padding: 0 24px;
       display: flex;
       align-items: center;
-      height: 52px;
+      flex-wrap: wrap;
+      min-height: 52px;
     }
     .nav-brand { font-weight: 700; color: #1a202c; margin-right: 24px; font-size: 1rem; text-decoration: none; }
     .nav a {
@@ -33,6 +35,17 @@
     }
     .nav a:hover { color: #2d3748; }
     .nav a.active { color: #4299e1; border-bottom-color: #4299e1; font-weight: 600; }
+    .nav-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+    .nav-username { font-size: 0.875rem; color: #4a5568; }
+    .nav-logout { padding: 6px 14px; background: #e2e8f0; border: none; border-radius: 6px; font-size: 0.85rem; cursor: pointer; color: #2d3748; }
+    .nav-logout:hover { background: #cbd5e0; }
+    @media (max-width: 768px) {
+      .nav a { font-size: 0.8rem; padding: 0 8px; }
+    }
+    @media (max-width: 480px) {
+      .nav-username { display: none; }
+      .nav-brand { margin-right: 12px; }
+    }
 
     /* 프로필 배너 */
     .profile-banner {
@@ -455,6 +468,10 @@
     <a href="/step2.html" class="active">레시피 추천</a>
     <a href="/step3.html">보관함</a>
     <a href="/profile.html">내 프로필</a>
+    <div class="nav-right">
+      <span class="nav-username" id="nav-username"></span>
+      <button class="nav-logout" id="nav-logout">로그아웃</button>
+    </div>
   </nav>
 
   <div class="container">
@@ -503,7 +520,7 @@
       </div>
 
       <button class="generate-btn" id="generate-btn">레시피 생성하기</button>
-      <div class="error-box" id="error-box"></div>
+      <div class="error-box" id="error-box" role="alert"></div>
     </div>
 
     <!-- 로딩 -->
@@ -516,7 +533,7 @@
     <div id="result-section" style="display:none;">
       <div class="result-header">
         <h2>추천 레시피</h2>
-        <button class="regen-btn" id="regen-btn">↻ 다른 레시피 보기</button>
+        <button class="regen-btn" id="regen-btn" aria-label="다른 레시피 생성">↻ 다른 레시피 보기</button>
       </div>
       <div class="recipe-grid" id="recipe-grid"></div>
     </div>
@@ -555,9 +572,22 @@
   </div>
 
   <!-- 토스트 -->
-  <div class="toast" id="toast"></div>
+  <div class="toast" id="toast" aria-live="polite"></div>
 
   <script>
+    // ── 인증 초기화 ──────────────────────────────
+    (function initAuth() {
+      const token = localStorage.getItem('auth_token');
+      const user = JSON.parse(localStorage.getItem('auth_user') || 'null');
+      if (user) document.getElementById('nav-username').textContent = user.name + '님';
+      document.getElementById('nav-logout').addEventListener('click', function () {
+        fetch('/api/auth/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('auth_user');
+        location.href = '/login.html';
+      });
+    })();
+
     // ──────────────────────────────────────
     // 초기화
     // ──────────────────────────────────────
@@ -618,7 +648,15 @@
     const resultSection = document.getElementById("result-section");
     const recipeGrid = document.getElementById("recipe-grid");
 
-    async function generateRecipes() {
+    // U-5: 재료 없을 때 생성 버튼 비활성화
+    if (ingredients.length === 0) {
+      generateBtn.disabled = true;
+      generateBtn.textContent = "재료를 먼저 선택해주세요";
+    } else {
+      generateBtn.textContent = "✨ 레시피 생성";
+    }
+
+    async function generateRecipes(withNonce = false) {
       const cookTime = parseInt(document.getElementById("cook-time").value);
       const servings = parseInt(document.getElementById("servings").value);
       const dietary = [...document.querySelectorAll("#dietary-checks label.checked")]
@@ -630,19 +668,27 @@
       errorBox.style.display = "none";
 
       try {
+        const token = localStorage.getItem('auth_token');
+        const body = {
+          ingredients,
+          options: {
+            max_cook_time: cookTime,
+            servings,
+            dietary,
+            allergies: userProfile?.allergies || [],
+            disliked: userProfile?.disliked_ingredients || [],
+          },
+          // 재생성 요청 시 nonce로 캐시 우회하여 새 결과 수신
+          ...(withNonce ? { nonce: Date.now() } : {}),
+        };
+
         const res = await fetch("/api/recipes", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ingredients,
-            options: {
-              max_cook_time: cookTime,
-              servings,
-              dietary,
-              allergies: userProfile?.allergies || [],
-              disliked: userProfile?.disliked_ingredients || [],
-            },
-          }),
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + token,
+          },
+          body: JSON.stringify(body),
         });
         const data = await res.json();
         if (!data.success) throw new Error(data.error || "레시피 생성 실패");
@@ -660,8 +706,8 @@
       }
     }
 
-    generateBtn.addEventListener("click", generateRecipes);
-    regenBtn.addEventListener("click", generateRecipes);
+    generateBtn.addEventListener("click", () => generateRecipes(false));
+    regenBtn.addEventListener("click", () => generateRecipes(true));
 
     // ──────────────────────────────────────
     // 카드 렌더링

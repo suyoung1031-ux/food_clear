@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>내 프로필</title>
+  <script>if (!localStorage.getItem('auth_token')) location.replace('/login.html');</script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -20,8 +21,9 @@
       padding: 0 24px;
       display: flex;
       align-items: center;
+      flex-wrap: wrap;
       gap: 0;
-      height: 52px;
+      min-height: 52px;
     }
     .nav-brand { font-weight: 700; color: #1a202c; margin-right: 24px; font-size: 1rem; text-decoration: none; }
     .nav a {
@@ -37,6 +39,17 @@
     }
     .nav a:hover { color: #2d3748; }
     .nav a.active { color: #4299e1; border-bottom-color: #4299e1; font-weight: 600; }
+    .nav-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+    .nav-username { font-size: 0.875rem; color: #4a5568; }
+    .nav-logout { padding: 6px 14px; background: #e2e8f0; border: none; border-radius: 6px; font-size: 0.85rem; cursor: pointer; color: #2d3748; }
+    .nav-logout:hover { background: #cbd5e0; }
+    @media (max-width: 768px) {
+      .nav a { font-size: 0.8rem; padding: 0 8px; }
+    }
+    @media (max-width: 480px) {
+      .nav-username { display: none; }
+      .nav-brand { margin-right: 12px; }
+    }
 
     .container { max-width: 600px; margin: 40px auto; padding: 0 16px; }
 
@@ -192,6 +205,10 @@
     <a href="/step2.html">레시피 추천</a>
     <a href="/step3.html">보관함</a>
     <a href="/profile.html" class="active">내 프로필</a>
+    <div class="nav-right">
+      <span class="nav-username" id="nav-username"></span>
+      <button class="nav-logout" id="nav-logout">로그아웃</button>
+    </div>
   </nav>
 
   <div class="container">
@@ -268,9 +285,22 @@
     </div>
   </div>
 
-  <div class="toast" id="toast"></div>
+  <div class="toast" id="toast" aria-live="polite"></div>
 
   <script>
+    // ── 인증 초기화 ──────────────────────────────
+    (function initAuth() {
+      const token = localStorage.getItem('auth_token');
+      const user = JSON.parse(localStorage.getItem('auth_user') || 'null');
+      if (user) document.getElementById('nav-username').textContent = user.name + '님';
+      document.getElementById('nav-logout').addEventListener('click', function () {
+        fetch('/api/auth/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('auth_user');
+        location.href = '/login.html';
+      });
+    })();
+
     // ── 유틸 ──────────────────────────────────
     function loadProfile() {
       try { return JSON.parse(localStorage.getItem("userProfile") || "null"); }

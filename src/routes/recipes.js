@@ -2,9 +2,18 @@ import { OPENROUTER_API_KEY } from "../config.js";
 
 const MODEL = "openai/gpt-oss-120b:free";
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10분
+const MAX_CACHE_SIZE = 200; // 최대 캐시 항목 수
 
 // 간단한 메모리 캐시
 const cache = new Map(); // key → { data, expiresAt }
+
+// 5분마다 만료된 엔트리 정리 (메모리 누수 방지)
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of cache) {
+    if (now > entry.expiresAt) cache.delete(key);
+  }
+}, 5 * 60 * 1000);
 
 function cacheKey(ingredients, options) {
   return JSON.stringify({ ingredients: [...ingredients].sort(), options });
@@ -21,6 +30,11 @@ function getCached(key) {
 }
 
 function setCache(key, data) {
+  // 최대 크기 초과 시 Map 삽입 순서 기준으로 가장 오래된 키 제거
+  if (cache.size >= MAX_CACHE_SIZE) {
+    const oldestKey = cache.keys().next().value;
+    cache.delete(oldestKey);
+  }
   cache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
 }
 
@@ -115,7 +129,7 @@ function parseRecipes(content) {
 
 export async function generateRecipes(req, res) {
   try {
-    const { ingredients, options = {} } = req.body;
+    const { ingredients, options = {}, nonce } = req.body;
     if (!ingredients?.length) {
       return res.status(400).json({ success: false, error: "재료 목록이 없습니다." });
     }
@@ -128,11 +142,14 @@ export async function generateRecipes(req, res) {
       disliked: options.disliked ?? [],
     };
 
-    // 캐시 확인
-    const key = cacheKey(ingredients, opts);
-    const cached = getCached(key);
-    if (cached) {
-      return res.json({ success: true, cached: true, ...cached });
+    // nonce가 있으면 캐시 우회 (재생성 요청); 없으면 일반 캐시 확인
+    const baseKey = cacheKey(ingredients, opts);
+    const key = nonce ? `${baseKey}:${nonce}` : baseKey;
+    if (!nonce) {
+      const cached = getCached(key);
+      if (cached) {
+        return res.json({ success: true, cached: true, ...cached });
+      }
     }
 
     const apiRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {

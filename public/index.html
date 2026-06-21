@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>냉장고 재료 인식</title>
+  <script>if (!localStorage.getItem('auth_token')) location.replace('/login.html');</script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -23,7 +24,8 @@
       padding: 0 24px;
       display: flex;
       align-items: center;
-      height: 52px;
+      flex-wrap: wrap;
+      min-height: 52px;
       flex-shrink: 0;
     }
     .nav-brand { font-weight: 700; color: #1a202c; margin-right: 24px; font-size: 1rem; text-decoration: none; }
@@ -34,6 +36,17 @@
     }
     .nav a:hover { color: #2d3748; }
     .nav a.active { color: #4299e1; border-bottom-color: #4299e1; font-weight: 600; }
+    .nav-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+    .nav-username { font-size: 0.875rem; color: #4a5568; }
+    .nav-logout { padding: 6px 14px; background: #e2e8f0; border: none; border-radius: 6px; font-size: 0.85rem; cursor: pointer; color: #2d3748; }
+    .nav-logout:hover { background: #cbd5e0; }
+    @media (max-width: 768px) {
+      .nav a { font-size: 0.8rem; padding: 0 8px; }
+    }
+    @media (max-width: 480px) {
+      .nav-username { display: none; }
+      .nav-brand { margin-right: 12px; }
+    }
 
     .main-wrap {
       flex: 1;
@@ -304,6 +317,10 @@
     <a href="/step2.html">레시피 추천</a>
     <a href="/step3.html">보관함</a>
     <a href="/profile.html">내 프로필</a>
+    <div class="nav-right">
+      <span class="nav-username" id="nav-username"></span>
+      <button class="nav-logout" id="nav-logout">로그아웃</button>
+    </div>
   </nav>
   <div class="main-wrap">
   <div class="card">
@@ -321,7 +338,7 @@
     <!-- 미리보기 -->
     <div id="preview-wrap">
       <img id="preview-img" src="" alt="미리보기" />
-      <button class="remove-btn" id="remove-btn" title="이미지 제거">✕</button>
+      <button class="remove-btn" id="remove-btn" title="이미지 제거" aria-label="이미지 제거">✕</button>
     </div>
 
     <!-- 분석 버튼 -->
@@ -334,10 +351,10 @@
     </div>
 
     <!-- 에러 -->
-    <div class="error-box" id="error-box"></div>
+    <div class="error-box" id="error-box" role="alert"></div>
 
     <!-- Rate limit 카운트다운 -->
-    <div class="rate-limit-box" id="rate-limit-box">
+    <div class="rate-limit-box" id="rate-limit-box" role="alert">
       <p>⏳ AI 서비스 사용량 한도에 도달했습니다.<br/>잠시 후 자동으로 재시도합니다.</p>
       <div class="countdown" id="countdown">60</div>
       <button class="retry-now-btn" id="retry-now-btn">지금 재시도</button>
@@ -350,7 +367,7 @@
 
       <div class="add-row">
         <input type="text" id="add-input" placeholder="재료 직접 추가..." />
-        <button id="add-btn">+ 추가</button>
+        <button id="add-btn" aria-label="재료 추가">+ 추가</button>
       </div>
 
       <div class="raw-desc" id="raw-desc"></div>
@@ -360,6 +377,19 @@
   </div>
 
   <script>
+    // ── 인증 초기화 ──────────────────────────────
+    (function initAuth() {
+      const token = localStorage.getItem('auth_token');
+      const user = JSON.parse(localStorage.getItem('auth_user') || 'null');
+      if (user) document.getElementById('nav-username').textContent = user.name + '님';
+      document.getElementById('nav-logout').addEventListener('click', function () {
+        fetch('/api/auth/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('auth_user');
+        location.href = '/login.html';
+      });
+    })();
+
     const uploadZone = document.getElementById("upload-zone");
     const fileInput = document.getElementById("file-input");
     const previewWrap = document.getElementById("preview-wrap");
@@ -436,13 +466,33 @@
       currentFile = file;
       const reader = new FileReader();
       reader.onload = (e) => {
-        previewImg.src = e.target.result;
-        previewWrap.style.display = "block";
-        analyzeBtn.style.display = "block";
-        resultSection.style.display = "none";
-        nextBtn.style.display = "none";
-        errorBox.style.display = "none";
-        resetIngredients();
+        // 캔버스로 리사이즈·압축하여 전송 데이터 최소화 (최대 1280px, JPEG 0.85)
+        const img = new Image();
+        img.onload = () => {
+          const MAX_DIM = 1280;
+          let { width, height } = img;
+          if (width > MAX_DIM || height > MAX_DIM) {
+            if (width >= height) {
+              height = Math.round(height * MAX_DIM / width);
+              width = MAX_DIM;
+            } else {
+              width = Math.round(width * MAX_DIM / height);
+              height = MAX_DIM;
+            }
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+          previewImg.src = canvas.toDataURL("image/jpeg", 0.85);
+          previewWrap.style.display = "block";
+          analyzeBtn.style.display = "block";
+          resultSection.style.display = "none";
+          nextBtn.style.display = "none";
+          errorBox.style.display = "none";
+          resetIngredients();
+        };
+        img.src = e.target.result;
       };
       reader.readAsDataURL(file);
     }
@@ -482,10 +532,14 @@
 
       try {
         const mimeType = currentFile.type;
+        const token = localStorage.getItem('auth_token');
 
         const res = await fetch("/api/analyze", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + token,
+          },
           body: JSON.stringify({ image: previewImg.src, mimeType }),
         });
 
